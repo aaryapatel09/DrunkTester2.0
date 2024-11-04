@@ -11,4 +11,4 @@ DrunkTester 2.0 includes two primary tests to detect sobriety:
 Trained from scratch using a dataset of both sober and intoxicated individuals, this test analyzes facial features to assess the user's sobriety.
 Audio Recognition Test:
 
-This feature analyzes audio input to detect slurred speech by examining spectrograms. We implement the Levenshtein distance algorithm to assess the similarity between the user's speech and standard speech patterns, effectively identifying signs of intoxication.
+This feature analyzes audio input to detect slurred speech by examining spectrograms. I implemented the Levenshtein distance algorithm to assess the similarity between the user's speech and standard speech patterns, effectively identifying signs of intoxication.
