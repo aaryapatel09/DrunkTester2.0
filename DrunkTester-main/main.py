@@ -1,168 +1,153 @@
-from flask import Flask, render_template, request, flash, redirect, url_for, session
+from flask import Flask, jsonify
+from flask_restx import Api, Resource, fields
+from flask_cors import CORS
+from flask_jwt_extended import JWTManager
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
-import os
-import face_model
-import voice_model
-from werkzeug.utils import secure_filename
+from flask_sqlalchemy import SQLAlchemy
 import logging
-from typing import Optional, Tuple
+from logging.handlers import RotatingFileHandler
+import os
+from datetime import datetime
 import config
-from datetime import datetime, timedelta
+
+# Initialize Flask app
+app = Flask(__name__)
+app.config.from_object(config)
+
+# Initialize extensions
+api = Api(
+    app,
+    version='1.0',
+    title='DrunkTester API',
+    description='A sophisticated API for intoxication detection',
+    doc='/docs' if config.ENABLE_API_DOCUMENTATION else False
+)
+CORS(app, resources={r"/*": {"origins": config.CORS_ORIGINS}})
+jwt = JWTManager(app)
+db = SQLAlchemy(app)
 
 # Configure logging
-logging.basicConfig(
-    level=config.LOG_LEVEL,
-    format=config.LOG_FORMAT,
-    handlers=[
-        logging.FileHandler(config.LOG_FILE),
-        logging.StreamHandler()
-    ]
+if not os.path.exists(config.LOGS_FOLDER):
+    os.makedirs(config.LOGS_FOLDER)
+
+file_handler = RotatingFileHandler(
+    config.LOG_FILE,
+    maxBytes=config.LOG_MAX_SIZE,
+    backupCount=config.LOG_BACKUP_COUNT
 )
-logger = logging.getLogger(__name__)
+file_handler.setFormatter(logging.Formatter(config.LOG_FORMAT))
+app.logger.addHandler(file_handler)
+app.logger.setLevel(config.LOG_LEVEL)
 
-app = Flask(__name__)
-app.secret_key = config.FLASK_SECRET_KEY
-app.config['MAX_CONTENT_LENGTH'] = config.MAX_CONTENT_LENGTH
-app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(minutes=30)
-
-# Rate limiting
+# Initialize rate limiter
 limiter = Limiter(
     app=app,
     key_func=get_remote_address,
-    default_limits=["200 per day", "50 per hour"]
+    default_limits=[config.API_RATE_LIMIT]
 )
 
-def allowed_file(filename: str) -> bool:
-    return '.' in filename and filename.rsplit('.', 1)[1].lower() in config.ALLOWED_EXTENSIONS
+# API Models
+intoxication_model = api.model('IntoxicationResult', {
+    'is_intoxicated': fields.Boolean(required=True, description='Whether the person is intoxicated'),
+    'confidence': fields.Float(required=True, description='Confidence score'),
+    'face_analysis': fields.Nested(api.model('FaceAnalysis', {
+        'score': fields.Float(required=True),
+        'features': fields.List(fields.String, required=True)
+    })),
+    'speech_analysis': fields.Nested(api.model('SpeechAnalysis', {
+        'score': fields.Float(required=True),
+        'slurring_detected': fields.Boolean(required=True),
+        'speech_clarity': fields.Float(required=True)
+    })),
+    'timestamp': fields.DateTime(required=True)
+})
 
-def save_file(file, folder: str) -> Optional[str]:
-    """Safely save an uploaded file and return its path."""
-    try:
-        filename = secure_filename(file.filename)
-        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-        unique_filename = f"{timestamp}_{filename}"
-        filepath = os.path.join(folder, unique_filename)
-        file.save(filepath)
-        return filepath
-    except Exception as e:
-        logger.error(f"Error saving file: {str(e)}")
-        return None
+# Namespaces
+ns = api.namespace('analysis', description='Intoxication analysis operations')
 
-@app.route('/')
-def camera():
-    session.permanent = True
-    return render_template('camera.html')
-
-@app.route('/upload_photo', methods=['POST'])
-@limiter.limit("5 per minute")
-def upload_photo():
-    try:
-        if 'photo' not in request.files:
-            flash('No file uploaded', 'error')
-            return redirect(url_for('camera'))
-        
-        photo = request.files['photo']
-        if photo.filename == '':
-            flash('No file selected', 'error')
-            return redirect(url_for('camera'))
-        
-        if not allowed_file(photo.filename):
-            flash('Invalid file type. Allowed types: ' + ', '.join(config.ALLOWED_EXTENSIONS), 'error')
-            return redirect(url_for('camera'))
-
-        filepath = save_file(photo, config.UPLOAD_FOLDER)
-        if not filepath:
-            flash('Error saving file', 'error')
-            return redirect(url_for('camera'))
-
+@ns.route('/face')
+class FaceAnalysis(Resource):
+    @ns.doc('analyze_face')
+    @ns.response(200, 'Success', intoxication_model)
+    @ns.response(400, 'Invalid input')
+    @ns.response(401, 'Unauthorized')
+    @ns.response(429, 'Too many requests')
+    @limiter.limit("5 per minute")
+    def post(self):
+        """Analyze a face image for signs of intoxication"""
         try:
-            confidence, is_intoxicated = face_model.check_intoxicated(filepath)
-            session['face_confidence'] = confidence
-            session['is_intoxicated'] = is_intoxicated
-            
-            # Clean up uploaded file
-            os.remove(filepath)
-            
-            return render_template('voice_model.html')
+            # Implementation will be added
+            return jsonify({
+                'is_intoxicated': False,
+                'confidence': 0.0,
+                'face_analysis': {
+                    'score': 0.0,
+                    'features': []
+                },
+                'speech_analysis': None,
+                'timestamp': datetime.utcnow()
+            })
         except Exception as e:
-            logger.error(f"Error processing photo: {str(e)}")
-            flash('Error processing photo. Please try again.', 'error')
-            return redirect(url_for('camera'))
-    
-    except Exception as e:
-        logger.error(f"Unexpected error in upload_photo: {str(e)}")
-        flash('An unexpected error occurred', 'error')
-        return redirect(url_for('camera'))
+            app.logger.error(f"Error in face analysis: {str(e)}")
+            return {'message': 'Internal server error'}, 500
 
-@app.route('/upload_video', methods=['POST'])
-@limiter.limit("5 per minute")
-def upload_video():
-    try:
-        if 'video' not in request.files:
-            flash('No file uploaded', 'error')
-            return redirect(url_for('voice_model'))
-        
-        video = request.files['video']
-        if video.filename == '':
-            flash('No file selected', 'error')
-            return redirect(url_for('voice_model'))
-        
-        if not allowed_file(video.filename):
-            flash('Invalid file type. Allowed types: ' + ', '.join(config.ALLOWED_EXTENSIONS), 'error')
-            return redirect(url_for('voice_model'))
-
-        filepath = save_file(video, config.UPLOAD_FOLDER)
-        if not filepath:
-            flash('Error saving file', 'error')
-            return redirect(url_for('voice_model'))
-
+@ns.route('/speech')
+class SpeechAnalysis(Resource):
+    @ns.doc('analyze_speech')
+    @ns.response(200, 'Success', intoxication_model)
+    @ns.response(400, 'Invalid input')
+    @ns.response(401, 'Unauthorized')
+    @ns.response(429, 'Too many requests')
+    @limiter.limit("5 per minute")
+    def post(self):
+        """Analyze speech for signs of intoxication"""
         try:
-            phrase = voice_model.get_phrase()
-            session['target_phrase'] = phrase
-            
-            if not voice_model.get_wav_file(filepath):
-                flash('Error processing video file', 'error')
-                return redirect(url_for('voice_model'))
-
-            slurring_score = voice_model.check_slurring('test.wav', phrase)
-            session['slurring_score'] = slurring_score
-            
-            # Get face analysis results from session
-            face_confidence = session.get('face_confidence', 0)
-            is_intoxicated = session.get('is_intoxicated', False)
-            
-            # Calculate combined score
-            combined_score = (face_confidence + slurring_score) / 2
-            session['combined_score'] = combined_score
-            
-            # Clean up uploaded file
-            os.remove(filepath)
-            
-            if combined_score >= config.MODEL_CONFIDENCE_THRESHOLD:
-                return render_template('intoxicated.html')
-            else:
-                return render_template('not_intoxicated.html')
-                
+            # Implementation will be added
+            return jsonify({
+                'is_intoxicated': False,
+                'confidence': 0.0,
+                'face_analysis': None,
+                'speech_analysis': {
+                    'score': 0.0,
+                    'slurring_detected': False,
+                    'speech_clarity': 1.0
+                },
+                'timestamp': datetime.utcnow()
+            })
         except Exception as e:
-            logger.error(f"Error processing video: {str(e)}")
-            flash('Error processing video. Please try again.', 'error')
-            return redirect(url_for('voice_model'))
-    
-    except Exception as e:
-        logger.error(f"Unexpected error in upload_video: {str(e)}")
-        flash('An unexpected error occurred', 'error')
-        return redirect(url_for('voice_model'))
+            app.logger.error(f"Error in speech analysis: {str(e)}")
+            return {'message': 'Internal server error'}, 500
 
-@app.errorhandler(413)
-def too_large(e):
-    flash('File too large. Maximum size is 16MB.', 'error')
-    return redirect(url_for('camera'))
-
-@app.errorhandler(429)
-def ratelimit_handler(e):
-    flash('Too many requests. Please try again later.', 'error')
-    return redirect(url_for('camera'))
+@ns.route('/combined')
+class CombinedAnalysis(Resource):
+    @ns.doc('analyze_combined')
+    @ns.response(200, 'Success', intoxication_model)
+    @ns.response(400, 'Invalid input')
+    @ns.response(401, 'Unauthorized')
+    @ns.response(429, 'Too many requests')
+    @limiter.limit("5 per minute")
+    def post(self):
+        """Perform combined face and speech analysis"""
+        try:
+            # Implementation will be added
+            return jsonify({
+                'is_intoxicated': False,
+                'confidence': 0.0,
+                'face_analysis': {
+                    'score': 0.0,
+                    'features': []
+                },
+                'speech_analysis': {
+                    'score': 0.0,
+                    'slurring_detected': False,
+                    'speech_clarity': 1.0
+                },
+                'timestamp': datetime.utcnow()
+            })
+        except Exception as e:
+            app.logger.error(f"Error in combined analysis: {str(e)}")
+            return {'message': 'Internal server error'}, 500
 
 if __name__ == '__main__':
     app.run(
