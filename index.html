@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DrunkTester 2.0 — browser-only impairment screener</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<main>
+  <div class="disclaimer">
+    <strong>Not a breathalyzer.</strong> This is a research toy that measures three proxies correlated with impairment — reaction time, gaze stability, and speech smoothness — and compares them against a sober baseline you record first. It cannot measure blood alcohol content. Do not use it to decide whether to drive.
+  </div>
+
+  <header>
+    <h1>DrunkTester 2.0</h1>
+    <p class="sub">Three short tests in your browser. Nothing is uploaded — everything runs client-side on this page.</p>
+  </header>
+
+  <section id="baselineBanner" class="banner hidden">
+    <div>
+      <div class="banner-title">No sober baseline recorded yet</div>
+      <div class="banner-sub">Run all three tests once while sober, then save as baseline. Later results are only meaningful relative to your own baseline.</div>
+    </div>
+    <div><button id="baselineClear" class="secondary">Clear saved baseline</button></div>
+  </section>
+
+  <section class="card">
+    <div class="card-head">
+      <span class="num">1</span>
+      <div>
+        <h2>Reaction time</h2>
+        <p>5 trials. When the circle turns green, click as fast as you can. We measure your mean RT and its variability (SD). Alcohol raises both.</p>
+      </div>
+    </div>
+
+    <div id="rt-stage" class="rt-stage" role="button" tabindex="0">
+      <div id="rt-dot" class="rt-dot"></div>
+      <div id="rt-msg" class="rt-msg">Click to start</div>
+    </div>
+    <div class="metrics" id="rt-metrics"></div>
+  </section>
+
+  <section class="card">
+    <div class="card-head">
+      <span class="num">2</span>
+      <div>
+        <h2>Gaze stability</h2>
+        <p>Stare at the centre dot for 10 seconds. We track your irises via MediaPipe and measure how much they drift. Intoxication reduces gaze steadiness (nystagmus, saccade overshoot).</p>
+      </div>
+    </div>
+    <div class="gaze-wrap">
+      <video id="gz-video" autoplay muted playsinline></video>
+      <canvas id="gz-overlay"></canvas>
+      <div class="gaze-target" id="gz-target"></div>
+      <div id="gz-msg" class="gz-msg">Click to start camera</div>
+    </div>
+    <div class="row">
+      <button id="gz-start">Start gaze test</button>
+      <button id="gz-stop" class="secondary" disabled>Stop</button>
+    </div>
+    <div class="metrics" id="gz-metrics"></div>
+  </section>
+
+  <section class="card">
+    <div class="card-head">
+      <span class="num">3</span>
+      <div>
+        <h2>Speech smoothness</h2>
+        <p>Read the sentence aloud. We transcribe via the browser's Web Speech API and measure the word-error rate plus how long it took. Slurred or hesitant speech pushes both up.</p>
+      </div>
+    </div>
+    <blockquote id="sp-prompt" class="prompt">
+      The quick brown fox jumps over the lazy dog near the old oak tree.
+    </blockquote>
+    <div class="row">
+      <button id="sp-start">Start recording</button>
+      <button id="sp-stop" class="secondary" disabled>Stop</button>
+    </div>
+    <div id="sp-live" class="sp-live"></div>
+    <div class="metrics" id="sp-metrics"></div>
+  </section>
+
+  <section class="card result-card">
+    <h2>Composite impairment score</h2>
+    <p class="sub">Weighted average of how much each metric has shifted from your sober baseline. Only shown once you have a baseline <em>and</em> have run all three tests.</p>
+    <div class="composite">
+      <div class="composite-num" id="comp-num">—</div>
+      <div class="composite-band" id="comp-band"></div>
+    </div>
+    <div class="actions">
+      <button id="saveBaseline">Save current results as baseline</button>
+      <button id="resetTests" class="secondary">Reset tests (keep baseline)</button>
+    </div>
+  </section>
+
+  <footer>
+    <p>DrunkTester 2.0 · browser-only · source on <a href="https://github.com/aaryapatel09/DrunkTester2.0">GitHub</a></p>
+  </footer>
+</main>
+<script type="module" src="script.js"></script>
+</body>
+</html>
