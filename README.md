@@ -49,14 +49,3 @@ A single sober run is noisy — for a real baseline, run it 3–5 times and aver
 - No peer-reviewed threshold maps these proxies to BAC. The "elevated / high" bands are heuristic, not clinical.
 
 If you want to harden this, the right next step is a supervised model trained on (proxy metrics → actual BAC measurements) pairs — which requires data this project does not have.
-
-## Why the rewrite
-
-The previous version had:
-- A zip-extracted subdirectory (`DrunkTester-main/`) committed into the repo
-- Two parallel entry points (`app.py`, `main.py`) both building Flask apps
-- A TensorFlow face model (`face_analyzer.py`) and a PyTorch face model (`face_model.py`) doing the same thing — neither with trained weights
-- A call to `dlib.shape_predictor("shape_predictor_68_face_landmarks.dat")` for a 100 MB file not included in the repo
-- JWT, SQLAlchemy, psycopg2, rate-limiting — all scaffolding for a system that could not actually classify anything
-
-So the app advertised "intoxication detection" while running untrained random weights on user input. Replacing that with three simple tests that measure *real* signals — even if approximate — is more honest.
