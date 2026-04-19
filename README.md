@@ -1,182 +1,62 @@
-# DrunkTester 2.0 - Advanced Intoxication Detection System
+# DrunkTester 2.0
 
-A sophisticated machine learning-based system for detecting potential intoxication through facial analysis and speech pattern recognition. This system uses advanced deep learning models and signal processing techniques to provide accurate and reliable intoxication detection.
+Browser-only impairment screener. Three short tests that measure real signals correlated with intoxication, compared against a sober baseline you record yourself.
 
-## Features
+> **This is not a breathalyzer.** It cannot measure blood alcohol. It measures proxies. Do not use it to decide whether to drive.
 
-- **Advanced Facial Analysis**
-  - Real-time face detection using dlib
-  - Facial landmark detection (68 points)
-  - Eye aspect ratio calculation for drowsiness detection
-  - Mouth aspect ratio analysis for speech pattern recognition
-  - Jaw angle measurement for head position analysis
-  - Deep learning-based intoxication classification
+## How it works
 
-- **Speech Pattern Analysis**
-  - Mel spectrogram generation for audio analysis
-  - MFCC feature extraction
-  - Spectral feature analysis
-  - Pitch detection and analysis
-  - Noise reduction and audio enhancement
-  - LSTM-based temporal pattern recognition
+Three tests — all client-side, no uploads:
 
-- **Combined Analysis**
-  - Integration of facial and speech analysis
-  - Weighted confidence scoring
-  - Comprehensive intoxication assessment
+1. **Reaction time** — 5 trials of click-when-green. Reports mean RT and SD.
+   Alcohol reliably increases both ([Maylor & Rabbitt, 1993](https://pubmed.ncbi.nlm.nih.gov/8234536/); many since).
+2. **Gaze stability** — MediaPipe FaceLandmarker tracks your iris position for 10 seconds while you stare at a fixed dot. Jitter is reported as the radial standard deviation of iris centroid position in image coordinates. Intoxication degrades smooth pursuit and saccadic control.
+3. **Speech smoothness** — You read a fixed sentence aloud. The browser's Web Speech API transcribes you; we compute the word error rate against the prompt plus total read duration. Slurred or hesitant speech pushes both up.
 
-- **Security & Performance**
-  - JWT-based authentication
-  - Rate limiting for API protection
-  - Feature caching for improved performance
-  - Analysis history tracking
-  - Secure file handling
+A **composite score** combines the three as weighted percentage deltas from your baseline:
+- RT mean (40%)
+- gaze jitter (30%)
+- speech WER increase (30%, weighted 4× because WER saturates low)
 
-## Technical Architecture
+Each dimension is capped at +200% so one noisy signal can't dominate.
 
-### Face Analysis Module
-- TensorFlow-based CNN architecture
-- Dlib for facial landmark detection
-- Haar cascades for face detection
-- Feature extraction and analysis pipeline
-- Caching system for improved performance
+## Run it
 
-### Speech Analysis Module
-- TensorFlow-based hybrid CNN-LSTM model
-- Librosa for audio processing
-- Mel spectrogram generation
-- Advanced feature extraction
-- Temporal pattern recognition
+You need a browser that supports:
+- `navigator.mediaDevices.getUserMedia` (any modern browser)
+- MediaPipe Tasks Vision WASM (Chrome, Edge, Firefox, Safari 16.4+)
+- `SpeechRecognition` (Chrome / Edge — Firefox and Safari lack it, so the speech test will show a warning there)
 
-### API Layer
-- Flask REST API with Swagger documentation
-- JWT authentication
-- Rate limiting
-- Error handling and logging
-- History tracking and caching
+Serve the files over `http://localhost` or HTTPS (required for getUserMedia):
 
-## Prerequisites
-
-- Python 3.8 or higher
-- TensorFlow 2.x
-- Dlib
-- OpenCV
-- Librosa
-- Flask and related packages
-- CUDA-compatible GPU (recommended)
-
-## Installation
-
-1. Clone the repository:
 ```bash
-git clone https://github.com/aaryapatel09/DrunkTester2.0.git
-cd DrunkTester2.0
+python3 -m http.server 8000
+# open http://localhost:8000
 ```
 
-2. Create and activate a virtual environment:
-```bash
-python -m venv venv
-source venv/bin/activate  # On Windows: venv\Scripts\activate
-```
+## Calibration workflow
 
-3. Install dependencies:
-```bash
-pip install -r requirements.txt
-```
+1. **Record a sober baseline.** Run all three tests while sober, click **Save current results as baseline.** Baseline is stored in `localStorage`, never leaves the device.
+2. **Later, retake the tests.** Each metric shows its raw value plus `±X% vs baseline`, and the composite score summarises.
 
-4. Download required models:
-```bash
-# Download dlib shape predictor
-wget http://dlib.net/files/shape_predictor_68_face_landmarks.dat.bz2
-bunzip2 shape_predictor_68_face_landmarks.dat.bz2
-```
+A single sober run is noisy — for a real baseline, run it 3–5 times and average mentally, or extend the script to store multiple baselines.
 
-5. Configure the application:
-- Copy `config.example.py` to `config.py`
-- Update configuration settings as needed
+## Honest limits
 
-## Usage
+- Reaction-time test measures **visuomotor RT**, which is affected by fatigue, caffeine, screen lag, and mouse/trackpad latency — not just alcohol.
+- Gaze-jitter metric depends on head stability; if you move your head during the test, jitter rises regardless of intoxication.
+- Web Speech API transcription quality varies by accent and microphone. A high WER might mean your mic is bad, not that you're drunk.
+- No peer-reviewed threshold maps these proxies to BAC. The "elevated / high" bands are heuristic, not clinical.
 
-1. Start the application:
-```bash
-python app.py
-```
+If you want to harden this, the right next step is a supervised model trained on (proxy metrics → actual BAC measurements) pairs — which requires data this project does not have.
 
-2. Access the API documentation:
-- Open your browser and navigate to `http://localhost:5000/docs`
+## Why the rewrite
 
-3. API Endpoints:
-- `/api/v1/login` - Authentication
-- `/api/v1/analyze` - Perform intoxication analysis
-- `/api/v1/history` - View analysis history
-- `/api/v1/clear-cache` - Clear feature cache
-- `/api/v1/train` - Train models on new data
+The previous version had:
+- A zip-extracted subdirectory (`DrunkTester-main/`) committed into the repo
+- Two parallel entry points (`app.py`, `main.py`) both building Flask apps
+- A TensorFlow face model (`face_analyzer.py`) and a PyTorch face model (`face_model.py`) doing the same thing — neither with trained weights
+- A call to `dlib.shape_predictor("shape_predictor_68_face_landmarks.dat")` for a 100 MB file not included in the repo
+- JWT, SQLAlchemy, psycopg2, rate-limiting — all scaffolding for a system that could not actually classify anything
 
-4. Example API Usage:
-```python
-import requests
-
-# Login
-response = requests.post('http://localhost:5000/api/v1/login', json={
-    'username': 'admin',
-    'password': 'admin'
-})
-token = response.json()['access_token']
-
-# Analyze face
-response = requests.post('http://localhost:5000/api/v1/analyze', 
-    headers={'Authorization': f'Bearer {token}'},
-    json={
-        'file_path': 'path/to/image.jpg',
-        'analysis_type': 'face'
-    }
-)
-```
-
-## Configuration
-
-The application can be configured through environment variables or by modifying `config.py`:
-
-- `FLASK_ENV` - Application environment (development/production)
-- `FLASK_DEBUG` - Debug mode
-- `FLASK_PORT` - Port number
-- `JWT_SECRET_KEY` - JWT secret key
-- `API_RATE_LIMIT` - API rate limit
-- `MODEL_PATH` - Path to model files
-- `UPLOAD_FOLDER` - Upload directory
-- `DATA_FOLDER` - Data storage directory
-- `LOGS_FOLDER` - Log directory
-- `CACHE_FOLDER` - Cache directory
-
-## Model Training
-
-The system supports model training with new data:
-
-1. Prepare training data:
-- Organize images in `data/train/sober` and `data/train/drunk`
-- Organize audio files in `data/train/sober_audio` and `data/train/drunk_audio`
-
-2. Start training:
-```bash
-curl -X POST http://localhost:5000/api/v1/train \
-  -H "Authorization: Bearer $TOKEN"
-```
-
-## Contributing
-
-1. Fork the repository
-2. Create a feature branch
-3. Commit your changes
-4. Push to the branch
-5. Create a Pull Request
-
-## License
-
-This project is licensed under the MIT License - see the LICENSE file for details.
-
-## Acknowledgments
-
-- TensorFlow team for the deep learning framework
-- Dlib developers for facial landmark detection
-- Librosa team for audio processing
-- Flask team for the web framework
+So the app advertised "intoxication detection" while running untrained random weights on user input. Replacing that with three simple tests that measure *real* signals — even if approximate — is more honest.
