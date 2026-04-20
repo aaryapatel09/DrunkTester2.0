@@ -407,10 +407,28 @@ function renderComposite() {
   // Cap each at +200% to avoid one noisy dimension dominating.
   const cap = (x) => Math.min(Math.max(x, 0), 2);
   const score = 100 * (0.4 * cap(rtΔ) + 0.3 * cap(gzΔ) + 0.3 * cap(spΔ * 4));
-  el.textContent = Math.round(score);
-  if (score < 15) { band.textContent = "close to baseline"; band.className = "composite-band low"; }
-  else if (score < 40) { band.textContent = "elevated"; band.className = "composite-band mod"; }
-  else { band.textContent = "high — do not drive"; band.className = "composite-band high"; }
+  const rounded = Math.round(score);
+  el.textContent = rounded;
+  let bandName;
+  if (score < 15) { bandName = "low"; band.textContent = "close to baseline"; }
+  else if (score < 40) { bandName = "mod"; band.textContent = "elevated"; }
+  else { bandName = "high"; band.textContent = "high — do not drive"; }
+  band.className = "composite-band " + bandName;
+
+  // Persist this run to history — but only once per test set so a simple
+  // rerender doesn't add duplicates. The dedupe key is the tuple of the raw
+  // metric values; saving a baseline or editing inputs restarts the test
+  // anyway, so this is naturally unique per completed session.
+  recordSession({
+    at: Date.now(),
+    score: rounded,
+    band: bandName,
+    rt_mean: state.rt.mean,
+    rt_sd: state.rt.sd,
+    gaze_jitter: state.gaze.jitter,
+    speech_wer: state.speech.wer,
+    baseline_at: state.baseline.at ?? null,
+  });
 }
 
 function rel(now, base) { return (now - base) / Math.max(1e-6, base); }
@@ -441,6 +459,97 @@ document.getElementById("baselineClear").addEventListener("click", () => {
   renderBaselineBanner();
   renderComposite();
 });
+
+// ============================================================================
+// Session history
+// ============================================================================
+const HISTORY_KEY = "dt2.history.v1";
+const HISTORY_MAX = 50;
+const historyCard = document.getElementById("historyCard");
+const historyList = document.getElementById("historyList");
+const historyChart = document.getElementById("historyChart");
+let lastSessionKey = null;
+
+function loadHistory() {
+  try {
+    const raw = localStorage.getItem(HISTORY_KEY);
+    return raw ? JSON.parse(raw) : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveHistory(list) {
+  localStorage.setItem(HISTORY_KEY, JSON.stringify(list.slice(-HISTORY_MAX)));
+}
+
+function recordSession(s) {
+  // Dedupe: the same test data shouldn't get recorded twice just because a
+  // render fires (e.g. the user changes the auto-append checkbox). The
+  // signature is the tuple of raw metric values; any real new test run
+  // produces different numbers.
+  const key = [s.rt_mean.toFixed(3), s.gaze_jitter.toFixed(6), s.speech_wer.toFixed(4)].join("|");
+  if (key === lastSessionKey) return;
+  lastSessionKey = key;
+
+  const list = loadHistory();
+  list.push(s);
+  saveHistory(list);
+  renderHistory();
+}
+
+function renderHistory() {
+  const list = loadHistory();
+  if (list.length === 0) {
+    historyCard.style.display = "none";
+    return;
+  }
+  historyCard.style.display = "block";
+
+  // Chart — plot score over time as a polyline. X axis is session index
+  // (evenly spaced) rather than real time, so a 4-session-in-one-night run
+  // reads cleanly; real times are in the tooltip/list below.
+  const W = 600, H = 160, PAD = 8;
+  const plotW = W - 2 * PAD, plotH = H - 2 * PAD;
+  const max = Math.max(50, ...list.map((s) => s.score));
+  const points = list.map((s, i) => {
+    const x = list.length === 1 ? W / 2 : PAD + (i / (list.length - 1)) * plotW;
+    const y = PAD + (1 - s.score / max) * plotH;
+    return [x, y, s];
+  });
+  const pathD = points.map((p, i) => `${i ? "L" : "M"}${p[0].toFixed(1)},${p[1].toFixed(1)}`).join(" ");
+  const dots = points.map(([x, y, s]) => {
+    const color = s.band === "high" ? "#e96b6b" : s.band === "mod" ? "#e5a23b" : "#46c08a";
+    return `<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="3.5" fill="${color}"><title>${s.score} (${s.band}) — ${new Date(s.at).toLocaleString()}</title></circle>`;
+  }).join("");
+  // Faint guide line at the "elevated" threshold (40)
+  const guideY = PAD + (1 - 40 / max) * plotH;
+  historyChart.innerHTML = `
+    <line x1="${PAD}" x2="${W - PAD}" y1="${guideY.toFixed(1)}" y2="${guideY.toFixed(1)}" stroke="#232834" stroke-dasharray="3,3"/>
+    <path d="${pathD}" fill="none" stroke="#6aa8ff" stroke-width="1.5"/>
+    ${dots}
+  `;
+
+  // List — newest first
+  historyList.innerHTML = list.slice().reverse().map((s) => {
+    const when = new Date(s.at);
+    const whenStr = when.toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+    return `<li>
+      <span class="when">${escapeHtml(whenStr)}</span>
+      <span class="band composite-band ${escapeHtml(s.band)}">${escapeHtml(s.band)}</span>
+      <span class="score">${s.score}</span>
+    </li>`;
+  }).join("");
+}
+
+document.getElementById("clearHistory").addEventListener("click", () => {
+  if (!confirm("Delete all stored sessions? This can't be undone.")) return;
+  localStorage.removeItem(HISTORY_KEY);
+  lastSessionKey = null;
+  renderHistory();
+});
+
+renderHistory();
 
 // ============================================================================
 // Tiny render helpers
