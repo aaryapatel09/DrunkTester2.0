@@ -32,8 +32,19 @@ function saveBaseline(b) {
 
 function renderBaselineBanner() {
   const el = document.getElementById("baselineBanner");
-  if (!state.baseline) el.classList.remove("hidden");
-  else el.classList.add("hidden");
+  if (!state.baseline) {
+    el.classList.remove("hidden");
+    return;
+  }
+  el.classList.add("hidden");
+  // Once a baseline exists, show when it was recorded next to the Save button
+  // so users notice stale baselines (e.g. a 3-month-old reading is suspect).
+  const host = document.getElementById("saveBaseline");
+  if (host && state.baseline.at) {
+    const days = Math.floor((Date.now() - state.baseline.at) / 86_400_000);
+    const when = days === 0 ? "today" : `${days} day${days === 1 ? "" : "s"} ago`;
+    host.textContent = `Save current results as baseline (current: recorded ${when})`;
+  }
 }
 
 renderBaselineBanner();
@@ -205,7 +216,8 @@ function gazeLoop() {
       if (left && right) {
         const cx = (left.x + right.x) / 2;
         const cy = (left.y + right.y) / 2;
-        gzSamples.push({ x: cx, y: cy });
+        const eyeDist = Math.hypot(right.x - left.x, right.y - left.y);
+        gzSamples.push({ x: cx, y: cy, eyeDist });
         drawGazeMarkers(left, right);
       }
     }
@@ -229,24 +241,42 @@ function finishGaze() {
     gzMetrics.innerHTML = `<div class="metric"><div class="k">No face detected</div></div>`;
     return;
   }
-  // Center samples on their mean and express jitter in mean-eye-distance units so
-  // head distance from the camera cancels out. Use radial SD for a single number.
+  // Normalise jitter by the inter-ocular distance so head distance from the
+  // camera cancels out. The previous version computed raw radial SD in
+  // normalised image coords — the comment claimed "mean-eye-distance units"
+  // but the code didn't actually divide.
   const mx = gzSamples.reduce((a, s) => a + s.x, 0) / gzSamples.length;
   const my = gzSamples.reduce((a, s) => a + s.y, 0) / gzSamples.length;
+  const meanEyeDist = gzSamples.reduce((a, s) => a + s.eyeDist, 0) / gzSamples.length;
   const rs = gzSamples.map((s) => Math.hypot(s.x - mx, s.y - my));
-  const jitter = Math.sqrt(rs.reduce((a, r) => a + r * r, 0) / rs.length);
-  state.gaze = { jitter };
+  const rawJitter = Math.sqrt(rs.reduce((a, r) => a + r * r, 0) / rs.length);
+  const jitter = rawJitter / Math.max(1e-6, meanEyeDist);
+
+  // Also flag head drift: if the user moved their head during the test the
+  // inflated jitter is noise, not nystagmus. eyeDist standard deviation is a
+  // decent proxy for depth wobble; mean-of-samples drift catches pan/tilt.
+  const eyeDistSd = Math.sqrt(
+    gzSamples.reduce((a, s) => a + (s.eyeDist - meanEyeDist) ** 2, 0) / gzSamples.length
+  );
+  const depthWobble = eyeDistSd / Math.max(1e-6, meanEyeDist);
+
+  state.gaze = { jitter, depthWobble, samples: gzSamples.length };
   renderGazeMetrics();
   renderComposite();
 }
 
 function renderGazeMetrics() {
   if (!state.gaze) return;
-  const { jitter } = state.gaze;
+  const { jitter, depthWobble, samples } = state.gaze;
   const base = state.baseline?.gaze;
+  const headWarn = depthWobble > 0.05
+    ? `<div class="metric" style="grid-column: 1 / -1"><div class="k">Heads up</div><div class="v" style="font-size:13px">Head moved during test; rerun while holding still for a cleaner reading.</div></div>`
+    : "";
   gzMetrics.innerHTML = `
-    ${metricHtml("Iris jitter (rSD)", (jitter * 1000).toFixed(2), base && delta((jitter - base.jitter) / Math.max(1e-6, base.jitter), "up"))}
-    ${metricHtml("Samples", gzSamples.length)}
+    ${metricHtml("Iris jitter", jitter.toFixed(4), base && delta((jitter - base.jitter) / Math.max(1e-6, base.jitter), "up"))}
+    ${metricHtml("Head motion", (depthWobble * 100).toFixed(1) + "%")}
+    ${metricHtml("Samples", samples)}
+    ${headWarn}
   `;
 }
 
@@ -289,7 +319,14 @@ spStart.addEventListener("click", () => {
     spLive.textContent = (finalText + " " + interim).trim();
   };
   recog.onerror = (e) => {
-    spLive.textContent = "Speech error: " + e.error;
+    const human = {
+      "not-allowed": "Microphone permission denied. Allow mic access in your browser and try again.",
+      "no-speech": "No speech detected — try closer to the mic and re-run.",
+      "audio-capture": "No microphone found.",
+      "network": "Speech recognition needs internet access and it failed to reach the service.",
+      "aborted": "Recording aborted.",
+    }[e.error] || `Speech error: ${e.error}`;
+    spLive.textContent = human;
   };
   recog.onend = () => {
     spStart.disabled = false;
