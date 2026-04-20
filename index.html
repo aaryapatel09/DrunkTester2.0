@@ -94,6 +94,18 @@
     </div>
   </section>
 
+  <section class="card" id="historyCard" style="display:none">
+    <div class="history-head">
+      <h2>History</h2>
+      <button id="clearHistory" class="secondary">Clear history</button>
+    </div>
+    <p class="sub">Every completed composite score is stored in this browser's <code>localStorage</code> (never uploaded). Watch your score trend across a night or across weeks.</p>
+    <div class="history-chart">
+      <svg id="historyChart" viewBox="0 0 600 160" preserveAspectRatio="none" aria-label="Composite score over time"></svg>
+    </div>
+    <ol class="history-list" id="historyList"></ol>
+  </section>
+
   <footer>
     <p>DrunkTester 2.0 · browser-only · source on <a href="https://github.com/aaryapatel09/DrunkTester2.0">GitHub</a></p>
   </footer>
